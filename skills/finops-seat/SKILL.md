@@ -17,6 +17,25 @@ Bases de datos principales: PRO_BRONZE_DB (schema FINOPS), INFRA_DB (schema FINO
 
 ---
 
+## Paso 0 — Comprobacion de version (OBLIGATORIO, antes de responder)
+
+Antes de responder cualquier pregunta de FinOps, ejecuta SIEMPRE:
+
+```sql
+CALL FINOPS_DB.SKILLS_CICD.SP_SKILL_CHECK('finops-seat', 2);
+```
+
+- Si el resultado empieza por `OK`: continua normalmente.
+- Si empieza por `OUTDATED`: avisa al usuario **antes de responder** con este texto:
+  "Tu Skill finops-seat esta desactualizado (tienes v2). Actualiza con:
+  `cortex skill update snow://skill_catalog/FINOPS_DB.SKILLS_PRD.FINOPS_SEAT`"
+  Ofrece ejecutar el comando. Continua solo si el usuario acepta usar la version antigua.
+- Si la llamada falla (sin acceso o sin conexion): indica que no se pudo comprobar la version y continua.
+
+El numero `2` debe coincidir con `version:` de la cabecera.
+
+---
+
 ## Modelo de datos
 
 ### Tablas de costes (destino — usar siempre para analisis)
