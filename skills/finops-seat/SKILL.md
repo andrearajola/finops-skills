@@ -1,7 +1,7 @@
 ---
 name: finops-seat
 description: Asistente de FinOps para Snowflake. Proporciona el modelo de datos, reglas de fechas, logica de creditos, y consultas comunes para reconciliacion y analisis de costes.
-version: 1
+version: 2
 ---
 
 # FinOps Skill — SEAT (DATAGARAGE)
@@ -208,7 +208,20 @@ SELECT
 FROM compute, account, ai;
 ```
 
-Nota: STORAGE se mide en TB, no en creditos. Se factura por separado.
+Nota: STORAGE se mide en TB, no en creditos. Para pasarlo a EUR usar la tarifa `TB/MES` de USAGE_UNITS_COST y CURRENCY_EXCHANGE (ver consulta 9).
+
+### Conversion a EUR (todas las categorias)
+
+| Categoria | Tabla | Unidad | Tarifa (USAGE_UNITS_COST.UNITS_OF_USAGE) |
+|-----------|-------|--------|------------------------------------------|
+| Compute | SNOWFLAKE_COST_CREDITS | Creditos | `CREDIT` |
+| Serverless / Governance / Data Integration | SNOWFLAKE_COST_ACCOUNT_CREDITS | Creditos | `CREDIT` |
+| AI/ML | SNOWFLAKE_COST_AI_CREDITS | Creditos | `IA_CREDIT` |
+| Storage | SNOWFLAKE_COST_STORAGE | TB (snapshot diario) | `TB/MES` |
+
+Formula: `cantidad x UNITS_OF_USAGE_COST (USD) x CURRENCY_DESTINATION_AMT (USD->EUR)`.
+Tipo de cambio: `CURRENCY_EXCHANGE WHERE CURRENCY_ORIGIN = 'USD' AND CURRENCY_DESTINATION = 'EUR' AND fecha BETWEEN START_DATE AND END_DATE`.
+Storage: la tarifa es mensual -> para un mes usar el TB medio del mes; para N dias, TB medio x tarifa x N/30.
 
 ### Comparacion con factura de Snowflake
 
@@ -369,6 +382,102 @@ WHERE BU = 'CHECK' OR UC = 'CHECK'
 ORDER BY OBJECT_TYPE, OBJECT_NAME;
 ```
 
+### 9. Coste de storage en EUR por mes (reconciliacion con factura)
+```sql
+-- TB medio del mes x tarifa TB/MES x tipo de cambio USD->EUR
+WITH tarifa AS (
+    SELECT UNITS_OF_USAGE_COST AS P
+    FROM PRO_BRONZE_DB.FINOPS.USAGE_UNITS_COST
+    WHERE UNITS_OF_USAGE = 'TB/MES' AND PLATFORM = 'SNOWFLAKE'
+),
+fx AS (
+    SELECT CURRENCY_DESTINATION_AMT AS R, START_DATE, END_DATE
+    FROM PRO_BRONZE_DB.FINOPS.CURRENCY_EXCHANGE
+    WHERE CURRENCY_ORIGIN = 'USD' AND CURRENCY_DESTINATION = 'EUR'
+),
+diario AS (
+    SELECT DATE, SUM(TOTAL_STORAGE_TB) AS TB   -- schemas + stages (RESOURCE_TYPE SCHEMA y ACCOUNT)
+    FROM PRO_BRONZE_DB.FINOPS.SNOWFLAKE_COST_STORAGE
+    WHERE DATE >= DATEADD('month', -3, DATE_TRUNC('month', CURRENT_DATE()))
+      AND DATE <  DATE_TRUNC('month', CURRENT_DATE())   -- solo meses completos
+    GROUP BY DATE
+)
+SELECT
+    DATE_TRUNC('month', d.DATE)           AS mes,
+    ROUND(AVG(d.TB), 4)                   AS tb_medio,
+    ROUND(AVG(d.TB) * MAX(t.P), 2)        AS storage_usd,
+    ROUND(AVG(d.TB) * MAX(t.P) * MAX(fx.R), 2) AS storage_eur
+FROM diario d
+CROSS JOIN tarifa t
+JOIN fx ON LAST_DAY(d.DATE) BETWEEN fx.START_DATE AND fx.END_DATE
+GROUP BY 1
+ORDER BY 1;
+```
+
+Para comparar con la factura: `SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY WHERE SERVICE_TYPE = 'STORAGE'` (en USD). Comparar con `storage_usd`.
+
+---
+
+## Learning — Uso de CoCo con FinOps
+
+### Que es CoCo?
+
+CoCo (Cortex Code) es el IDE de Snowflake que permite interactuar con datos usando lenguaje natural. Con el FinOps Skill instalado, CoCo ya conoce el modelo de datos de FinOps y puede generar consultas sobre costes sin necesidad de conocer SQL.
+
+### Procedimientos comunes con CoCo
+
+#### 1. Analisis de costes por BU
+Pregunta a CoCo: *"Cuanto ha gastado el BU P en compute en los ultimos 30 dias?"*
+
+CoCo usara SNOWFLAKE_COST_CREDITS + TAGS_DEFINITIONS para filtrar por BU = 'P' y sumar creditos.
+
+#### 2. Identificar picos de consumo
+Pregunta: *"Cual es el warehouse con mayor consumo esta semana?"*
+
+CoCo consultara SNOWFLAKE_COST_CREDITS agrupando por WAREHOUSE_NAME.
+
+#### 3. Seguimiento de AI/ML
+Pregunta: *"Dame el desglose de creditos AI por servicio del ultimo mes"*
+
+CoCo consultara SNOWFLAKE_COST_AI_CREDITS agrupando por SERVICE_TYPE. Aqui tambien se ve el consumo de CoCo (SERVICE_TYPE = 'Cortex Code Snowsight' o 'Cortex Code CLI').
+
+#### 4. Cobertura de tags
+Pregunta: *"Que objetos tienen BU = CHECK?"*
+
+CoCo consultara TAGS_DEFINITIONS para encontrar recursos sin clasificar.
+
+#### 5. Conversion a EUR
+Pregunta: *"Cuanto hemos gastado en total en EUR el mes pasado?"*
+
+CoCo aplicara la cadena de conversion: creditos x precio por credito (USAGE_UNITS_COST) x tipo de cambio (CURRENCY_EXCHANGE).
+
+### Como instalar el Skill en CoCo
+
+El Skill se publica como Cortex Extension. Para habilitarlo en tu sesion de CoCo:
+1. Abre CoCo (Snowsight o Desktop)
+2. Busca el skill `finops-seat` en el catalogo
+3. Instalalo — a partir de ese momento CoCo conoce el modelo de datos de FinOps
+
+### Monitorizar el uso de CoCo
+
+El consumo de CoCo se registra en `PRO_BRONZE_DB.FINOPS.SNOWFLAKE_COST_AI_CREDITS` con:
+- `SERVICE_TYPE = 'Cortex Code Snowsight'` — uso desde Snowsight
+- `SERVICE_TYPE = 'Cortex Code CLI'` — uso desde Desktop/CLI
+- `RESOURCE_TYPE = 'USER'` — con OBJECT_NAME = nombre del usuario
+
+```sql
+SELECT
+    DATE,
+    SERVICE_TYPE,
+    OBJECT_NAME AS usuario,
+    ROUND(SUM(TOTAL_CREDITS), 4) AS credits,
+    SUM(TOTAL_TOKENS) AS tokens
+FROM PRO_BRONZE_DB.FINOPS.SNOWFLAKE_COST_AI_CREDITS
+WHERE SERVICE_TYPE IN ('Cortex Code Snowsight', 'Cortex Code CLI')
+  AND DATE > DATEADD('day', -30, CURRENT_DATE())
+GROUP BY 1, 2, 3
+ORDER BY 1 DESC, 4 DESC;
+```
 
 ---
 
