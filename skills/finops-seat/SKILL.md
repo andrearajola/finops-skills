@@ -1,6 +1,5 @@
 ---
 name: finops-seat
-description: Asistente de FinOps para Snowflake. Proporciona el modelo de datos, reglas de fechas, logica de creditos, y consultas comunes para reconciliacion y analisis de costes.
 ---
 
 # FinOps Skill — SEAT (DATAGARAGE)
