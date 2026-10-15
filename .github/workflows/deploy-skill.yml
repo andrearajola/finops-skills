@@ -30,6 +30,7 @@ jobs:
     env:
       SCHEMA: ${{ github.ref_name == 'main' && 'FINOPS_DB.SKILLS_PRD' || 'FINOPS_DB.SKILLS_DEV' }}
       NAME: FINOPS_SEAT
+      SKILL: finops-seat
       EXT: ${{ github.ref_name == 'main' && 'FINOPS_DB.SKILLS_PRD.FINOPS_SEAT' || 'FINOPS_DB.SKILLS_DEV.FINOPS_SEAT' }}
       READER: ${{ github.ref_name == 'main' && 'FINOPS_SKILL_USERS' || 'FINOPS_SKILL_DEVS' }}
       DISCOVERABLE: ${{ github.ref_name == 'main' && 'TRUE' || 'FALSE' }}
@@ -60,7 +61,7 @@ jobs:
           echo "ALIAS=G$(git rev-parse --short=7 HEAD | tr a-z A-Z)" >> "$GITHUB_ENV"
 
       - name: Deploy new version
-        run: snow sql -c cicd -f ci/deploy_skill.sql -D ext=$EXT -D schema=$SCHEMA -D name=$NAME -D branch=$BRANCH -D alias=$ALIAS -D reader=$READER -D discoverable=$DISCOVERABLE
+        run: snow sql -c cicd -f ci/deploy_skill.sql -D ext=$EXT -D schema=$SCHEMA -D name=$NAME -D skill=$SKILL -D branch=$BRANCH -D alias=$ALIAS -D reader=$READER -D discoverable=$DISCOVERABLE
 
       - name: Abort open version on failure
         if: failure()
