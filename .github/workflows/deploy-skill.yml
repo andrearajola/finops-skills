@@ -1,0 +1,79 @@
+name: Deploy Skill
+
+# dev  -> FINOPS_DB.SKILLS_DEV.FINOPS_SEAT
+# main -> FINOPS_DB.SKILLS_PRD.FINOPS_SEAT (+ certify + email users)
+# Pull requests only run the validation.
+on:
+  push:
+    branches: [dev, main]
+    paths: ['skills/**', 'ci/**', '.github/workflows/deploy-skill.yml']
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate SKILL.md files
+        run: ./ci/validate_skills.sh
+
+  deploy:
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      EXT: ${{ github.ref_name == 'main' && 'FINOPS_DB.SKILLS_PRD.FINOPS_SEAT' || 'FINOPS_DB.SKILLS_DEV.FINOPS_SEAT' }}
+      BRANCH: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Snowflake CLI
+        run: pipx install snowflake-cli
+
+      - name: Configure key-pair connection
+        env:
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.snowflake
+          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > ~/.snowflake/cicd.p8
+          chmod 600 ~/.snowflake/cicd.p8
+          cat > ~/.snowflake/config.toml <<EOF
+          [connections.cicd]
+          account = "${{ secrets.SNOWFLAKE_ACCOUNT }}"
+          user = "${{ secrets.SNOWFLAKE_USER }}"
+          role = "${{ secrets.SNOWFLAKE_ROLE }}"
+          warehouse = "${{ secrets.SNOWFLAKE_WAREHOUSE }}"
+          authenticator = "SNOWFLAKE_JWT"
+          private_key_file = "$HOME/.snowflake/cicd.p8"
+          EOF
+          chmod 600 ~/.snowflake/config.toml
+          echo "ALIAS=G$(git rev-parse --short=7 HEAD | tr a-z A-Z)" >> "$GITHUB_ENV"
+
+      - name: Deploy new version
+        run: snow sql -c cicd -f ci/deploy_skill.sql -D ext=$EXT -D branch=$BRANCH -D alias=$ALIAS
+
+      - name: Abort open version on failure
+        if: failure()
+        run: snow sql -c cicd -f ci/abort_skill.sql -D ext=$EXT || true
+
+      - name: Certify (PRD)
+        if: github.ref_name == 'main'
+        run: snow sql -c cicd -f ci/certify_skill.sql -D ext=$EXT -D alias=$ALIAS
+
+      - name: Notify users (PRD)
+        if: github.ref_name == 'main'
+        run: |
+          NOTES=$(git log -1 --pretty=%B | sed "s/'/''/g")
+          snow sql -c cicd -q "CALL FINOPS_DB.SKILLS_CICD.SP_SKILL_NOTIFY_RELEASE('$EXT', '$ALIAS', '$NOTES')"
+
+      - name: Summary
+        run: |
+          echo "### Deployed $EXT version $ALIAS from $BRANCH" >> "$GITHUB_STEP_SUMMARY"
+          snow sql -c cicd -q "SHOW VERSIONS IN CORTEX EXTENSION $EXT" --format json \
+            | python3 -c "import json,sys;[print(f\"- {r['name']} {r['alias']} {r['certification_status']}\") for r in json.load(sys.stdin)[:3]]" >> "$GITHUB_STEP_SUMMARY"
