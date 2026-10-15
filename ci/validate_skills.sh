@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fails if any skills/<name>/SKILL.md is missing or has no name/description in its frontmatter.
 set -euo pipefail
+shopt -s nullglob
 status=0
 for dir in skills/*/; do
   f="${dir}SKILL.md"

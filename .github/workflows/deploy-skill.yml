@@ -28,7 +28,11 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
+      SCHEMA: ${{ github.ref_name == 'main' && 'FINOPS_DB.SKILLS_PRD' || 'FINOPS_DB.SKILLS_DEV' }}
+      NAME: FINOPS_SEAT
       EXT: ${{ github.ref_name == 'main' && 'FINOPS_DB.SKILLS_PRD.FINOPS_SEAT' || 'FINOPS_DB.SKILLS_DEV.FINOPS_SEAT' }}
+      READER: ${{ github.ref_name == 'main' && 'FINOPS_SKILL_USERS' || 'FINOPS_SKILL_DEVS' }}
+      DISCOVERABLE: ${{ github.ref_name == 'main' && 'TRUE' || 'FALSE' }}
       BRANCH: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +60,7 @@ jobs:
           echo "ALIAS=G$(git rev-parse --short=7 HEAD | tr a-z A-Z)" >> "$GITHUB_ENV"
 
       - name: Deploy new version
-        run: snow sql -c cicd -f ci/deploy_skill.sql -D ext=$EXT -D branch=$BRANCH -D alias=$ALIAS
+        run: snow sql -c cicd -f ci/deploy_skill.sql -D ext=$EXT -D schema=$SCHEMA -D name=$NAME -D branch=$BRANCH -D alias=$ALIAS -D reader=$READER -D discoverable=$DISCOVERABLE
 
       - name: Abort open version on failure
         if: failure()
