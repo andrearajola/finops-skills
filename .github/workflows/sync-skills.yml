@@ -1,0 +1,60 @@
+name: Sync Skills
+
+# Thin trigger: all deploy logic lives in Snowflake (FINOPS_DB.SKILLS_CICD.SP_SKILL_SYNC_ALL).
+#   push dev  -> changed skills published to FINOPS_DB.SKILLS_DEV
+#   push main -> changed skills published to FINOPS_DB.SKILLS_PRD (+ certify + email users)
+# Pull requests only run the validation (use it as a required check before merge).
+on:
+  push:
+    branches: [dev, main]
+    paths: ['skills/**', '.github/workflows/sync-skills.yml']
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+# One sync at a time: both branches share the same deploy state in Snowflake
+concurrency:
+  group: skill-sync
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate SKILL.md files
+        run: ./ci/validate_skills.sh
+
+  sync:
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Snowflake CLI
+        run: pipx install snowflake-cli
+
+      - name: Configure key-pair connection
+        env:
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.snowflake
+          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > ~/.snowflake/cicd.p8
+          chmod 600 ~/.snowflake/cicd.p8
+          cat > ~/.snowflake/config.toml <<EOF
+          [connections.cicd]
+          account = "${{ secrets.SNOWFLAKE_ACCOUNT }}"
+          user = "${{ secrets.SNOWFLAKE_USER }}"
+          role = "${{ secrets.SNOWFLAKE_ROLE }}"
+          warehouse = "${{ secrets.SNOWFLAKE_WAREHOUSE }}"
+          authenticator = "SNOWFLAKE_JWT"
+          private_key_file = "$HOME/.snowflake/cicd.p8"
+          EOF
+          chmod 600 ~/.snowflake/config.toml
+
+      - name: Sync changed skills (Snowflake)
+        run: |
+          OUT=$(snow sql -c cicd -q "CALL FINOPS_DB.SKILLS_CICD.SP_SKILL_SYNC_ALL()" --format json \
+                | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['SP_SKILL_SYNC_ALL'])")
+          echo "$OUT"
+          { echo "### Skill sync (${{ github.ref_name }} @ ${GITHUB_SHA::7})"; echo '```'; echo "$OUT"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if grep -q "FAILED" <<<"$OUT"; then echo "::error::At least one skill failed to deploy"; exit 1; fi
