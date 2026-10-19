@@ -1,6 +1,6 @@
 ---
 name: demo-hola
-description: Skill de ejemplo para la demo de CI/CD (saluda y explica el proceso)
+desc: Skill de ejemplo para la demo de CI/CD (saluda y explica el proceso)
 ---
 
 # Demo hola
