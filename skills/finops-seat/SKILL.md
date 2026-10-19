@@ -494,4 +494,4 @@ ORDER BY 1 DESC, 4 DESC;
 
 6. **TAGS_DEFINITIONS con 'CHECK'**: registros nuevos se insertan con BU/UC/TOOL = 'CHECK'. Esto indica que el equipo necesita clasificarlos. Usar la query 8 para encontrar objetos sin clasificar.
 
-<!-- POC Git-native CI/CD: deployed via Snowflake Git integration (2026-10-19) -->
+<!-- POC Git-native CI/CD: deployed via Snowflake Git integration (2026-10-19, v2) -->
