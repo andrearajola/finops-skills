@@ -8,3 +8,5 @@ description: Demo skill to test multi-skill CI/CD
 Say hello.
 
 Say hello twice.
+
+v3
