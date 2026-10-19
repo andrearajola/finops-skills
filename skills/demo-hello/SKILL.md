@@ -6,3 +6,5 @@ description: Demo skill to test multi-skill CI/CD
 # Demo hello
 
 Say hello.
+
+Say hello twice.
