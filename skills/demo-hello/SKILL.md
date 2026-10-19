@@ -1,6 +1,6 @@
 ---
 name: demo-hello
-desc: Demo skill to test multi-skill CI/CD
+description: Demo skill to test multi-skill CI/CD
 ---
 
 # Demo hello
