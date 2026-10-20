@@ -1,8 +1,10 @@
 name: Sync Skills
 
-# Thin trigger: all deploy logic lives in Snowflake (FINOPS_DB.SKILLS_CICD.SP_SKILL_SYNC_ALL).
-#   push dev  -> changed skills published to FINOPS_DB.SKILLS_DEV
-#   push main -> changed skills published to FINOPS_DB.SKILLS_PRD (+ certify + email users)
+# Thin trigger: all deploy logic lives in Snowflake (<db>.<cicd_schema>.SP_SKILL_SYNC_ALL).
+#   push dev  -> changed skills published to the DEV schema
+#   push main -> changed skills published to the PRD schema (+ certify + email users)
+# Repository variable SKILLS_CICD_SCHEMA = <db>.<cicd_schema> (e.g. FINOPS_DB.SKILLS_CICD).
+# If you rename the branches, change them below AND dev_branch/prd_branch in config.env.
 # Pull requests only run the validation (use it as a required check before merge).
 on:
   push:
@@ -52,8 +54,12 @@ jobs:
           chmod 600 ~/.snowflake/config.toml
 
       - name: Sync changed skills (Snowflake)
+        env:
+          SKILLS_CICD_SCHEMA: ${{ vars.SKILLS_CICD_SCHEMA }}
         run: |
-          OUT=$(snow sql -c cicd -q "CALL FINOPS_DB.SKILLS_CICD.SP_SKILL_SYNC_ALL()" --format json \
+          [[ "$SKILLS_CICD_SCHEMA" =~ ^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$ ]] \
+            || { echo "::error::Set repository variable SKILLS_CICD_SCHEMA (e.g. FINOPS_DB.SKILLS_CICD)"; exit 1; }
+          OUT=$(snow sql -c cicd -q "CALL ${SKILLS_CICD_SCHEMA}.SP_SKILL_SYNC_ALL()" --format json \
                 | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['SP_SKILL_SYNC_ALL'])")
           echo "$OUT"
           { echo "### Skill sync (${{ github.ref_name }} @ ${GITHUB_SHA::7})"; echo '```'; echo "$OUT"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
